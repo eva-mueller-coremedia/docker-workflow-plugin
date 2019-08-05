@@ -32,6 +32,9 @@ import hudson.model.Node;
 import hudson.util.ArgumentListBuilder;
 import hudson.util.VersionNumber;
 import org.jenkinsci.plugins.docker.commons.fingerprint.ContainerRecord;
+import org.jenkinsci.plugins.docker.commons.tools.DockerTool;
+import org.kohsuke.accmod.Restricted;
+import org.kohsuke.accmod.restrictions.NoExternalUse;
 
 import javax.annotation.CheckForNull;
 import javax.annotation.Nonnull;
@@ -44,25 +47,22 @@ import java.nio.charset.Charset;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
-import java.util.Map;
 import java.util.List;
-import java.util.Arrays;
+import java.util.Map;
 import java.util.StringTokenizer;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import org.jenkinsci.plugins.docker.commons.tools.DockerTool;
-import org.kohsuke.accmod.Restricted;
-import org.kohsuke.accmod.restrictions.NoExternalUse;
 
 /**
  * Simple docker client for Pipeline.
- * 
+ *
  * @author <a href="mailto:tom.fennelly@gmail.com">tom.fennelly@gmail.com</a>
  */
 public class DockerClient {
@@ -72,101 +72,149 @@ public class DockerClient {
     /**
      * Maximum amount of time (in seconds) to wait for {@code docker} client operations which are supposed to be more or less instantaneous.
      */
-    @SuppressFBWarnings(value="MS_SHOULD_BE_FINAL", justification="mutable for scripts")
+    @SuppressFBWarnings(value = "MS_SHOULD_BE_FINAL", justification = "mutable for scripts")
     @Restricted(NoExternalUse.class)
     public static int CLIENT_TIMEOUT = Integer.getInteger(DockerClient.class.getName() + ".CLIENT_TIMEOUT", 180); // TODO 2.4+ SystemProperties
 
     // e.g. 2015-04-09T13:40:21.981801679Z
     public static final String DOCKER_DATE_TIME_FORMAT = "yyyy-MM-dd'T'HH:mm:ss";
-    
+
     private final Launcher launcher;
-    private final @CheckForNull Node node;
-    private final @CheckForNull String toolName;
+    private final @CheckForNull
+    Node node;
+    private final @CheckForNull
+    String toolName;
+
+    private String serviceName;
 
     public DockerClient(@Nonnull Launcher launcher, @CheckForNull Node node, @CheckForNull String toolName) {
         this.launcher = launcher;
         this.node = node;
         this.toolName = toolName;
+        this.serviceName = null;
     }
 
     /**
      * Run a docker image.
      *
-     * @param launchEnv Docker client launch environment.
-     * @param image The image name.
-     * @param args Any additional arguments for the {@code docker run} command.
-     * @param workdir The working directory in the container, or {@code null} for default.
-     * @param volumes Volumes to be bound. Supply an empty list if no volumes are to be bound.
+     * @param launchEnv             Docker client launch environment.
+     * @param image                 The image name.
+     * @param args                  Any additional arguments for the {@code docker run} command.
+     * @param workdir               The working directory in the container, or {@code null} for default.
+     * @param volumes               Volumes to be bound. Supply an empty list if no volumes are to be bound.
      * @param volumesFromContainers Mounts all volumes from the given containers.
-     * @param containerEnv Environment variables to set in container.
-     * @param user The <strong>uid:gid</strong> to execute the container command as. Use {@link #whoAmI()}.
-     * @param command The command to execute in the image container being run.
+     * @param containerEnv          Environment variables to set in container.
+     * @param user                  The <strong>uid:gid</strong> to execute the container command as. Use {@link #whoAmI()}.
+     * @param command               The command to execute in the image container being run.
      * @return The container ID.
      */
     public String run(@Nonnull EnvVars launchEnv, @Nonnull String image, @CheckForNull String args, @CheckForNull String workdir, @Nonnull Map<String, String> volumes, @Nonnull Collection<String> volumesFromContainers, @Nonnull EnvVars containerEnv, @Nonnull String user, @Nonnull String... command) throws IOException, InterruptedException {
-        ArgumentListBuilder argb = new ArgumentListBuilder();
+        this.serviceName = null;
 
-        argb.add("run", "-t", "-d", "-u", user);
+        ArgumentListBuilder argb = new ArgumentListBuilder();
+        this.serviceName = "funny-bunny";
+        argb.add("-H", "tcp://m12n-ci-01-swarm-manager-01:2376");
+        argb.add("service", "create", "--name", this.serviceName, "-t", "-d", "-u", user, "--replicas", "1", "--restart-condition", "none");
         if (args != null) {
             argb.addTokenized(args);
         }
-        
+
         if (workdir != null) {
             argb.add("-w", workdir);
         }
         for (Map.Entry<String, String> volume : volumes.entrySet()) {
-            argb.add("-v", volume.getKey() + ":" + volume.getValue() + ":rw,z");
+//            argb.add("-v", volume.getKey() + ":" + volume.getValue() + ":rw,z");
+            String[] split = volume.getKey().split("/");
+//            argb.add("--mount", split[split.length - 1] + ":" + volume.getValue());
+            argb.add("--mount", "target=" + volume.getValue());
         }
         for (String containerId : volumesFromContainers) {
             argb.add("--volumes-from", containerId);
         }
         for (Map.Entry<String, String> variable : containerEnv.entrySet()) {
             argb.add("-e");
-            argb.addMasked(variable.getKey()+"="+variable.getValue());
+            argb.addMasked(variable.getKey() + "=" + variable.getValue());
         }
         argb.add(image).add(command);
 
         LaunchResult result = launch(launchEnv, false, null, argb);
         if (result.getStatus() == 0) {
-            return result.getOut();
+//            return result.getOut();
+            try {
+                return getContainerId(launchEnv, getTaskId(launchEnv, this.serviceName));
+            } catch (IOException e) {
+                rm(launchEnv, this.serviceName);
+                throw e;
+            } catch (InterruptedException e) {
+                rm(launchEnv, this.serviceName);
+                throw e;
+            }
         } else {
+            rm(launchEnv, this.serviceName);
             throw new IOException(String.format("Failed to run image '%s'. Error: %s", image, result.getErr()));
         }
     }
 
     public List<String> listProcess(@Nonnull EnvVars launchEnv, @Nonnull String containerId) throws IOException, InterruptedException {
-        LaunchResult result = launch(launchEnv, false, "top", containerId, "-eo", "pid,comm");
-        if (result.getStatus() != 0) {
-            throw new IOException(String.format("Failed to run top '%s'. Error: %s", containerId, result.getErr()));
-        }
         List<String> processes = new ArrayList<>();
-        try (Reader r = new StringReader(result.getOut());
-             BufferedReader in = new BufferedReader(r)) {
-            String line;
-            in.readLine(); // ps header
-            while ((line = in.readLine()) != null) {
-                final StringTokenizer stringTokenizer = new StringTokenizer(line, " ");
-                if (stringTokenizer.countTokens() < 2) {
-                    throw new IOException("Unexpected `docker top` output : "+line);
-                }
-                stringTokenizer.nextToken(); // PID
-                processes.add(stringTokenizer.nextToken()); // COMMAND
+        try {
+            LaunchResult result = launch(launchEnv, false, "-H", "tcp://m12n-ci-01-swarm-manager-01:2376", "service", "ps", this.serviceName, "--format", "{{.ID}}");
+//            LaunchResult result = launch(launchEnv, false, "-H", "tcp://m12n-ci-01-swarm-manager-01:2376", "top", resultService.getOut(), "-eo", "pid,comm");
+            if (result.getStatus() != 0) {
+                throw new IOException(String.format("Failed to run service ps '%s'. Error: %s", containerId, result.getErr()));
             }
+            try (Reader r = new StringReader(result.getOut());
+                 BufferedReader in = new BufferedReader(r)) {
+                String line;
+                in.readLine(); // ps header
+                while ((line = in.readLine()) != null) {
+                    final StringTokenizer stringTokenizer = new StringTokenizer(line, " ");
+                    if (stringTokenizer.countTokens() < 2) {
+                        throw new IOException("Unexpected `docker top` output : " + line);
+                    }
+                    stringTokenizer.nextToken(); // PID
+                    processes.add(stringTokenizer.nextToken()); // COMMAND
+                }
+            }
+        } catch (IOException e) {
+            rm(launchEnv, this.serviceName);
+            throw e;
+        } catch (InterruptedException e) {
+            throw e;
         }
         return processes;
     }
 
     /**
      * Stop a container.
-     * 
-     * <p>                              
+     *
+     * <p>
      * Also removes ({@link #rm(EnvVars, String)}) the container.
-     * 
-     * @param launchEnv Docker client launch environment.
+     *
+     * @param launchEnv   Docker client launch environment.
      * @param containerId The container ID.
      */
     public void stop(@Nonnull EnvVars launchEnv, @Nonnull String containerId) throws IOException, InterruptedException {
-        LaunchResult result = launch(launchEnv, false, "stop", "--time=1", containerId);
+//        LaunchResult result = launch(launchEnv, false, "-H", "tcp://m12n-ci-01-swarm-manager-01:2376", "service", "rm", containerId);
+//        if (result.getStatus() != 0) {
+//            throw new IOException(String.format("Failed to kill container '%s'.", containerId));
+//        }
+//        rm(launchEnv, containerId);
+    }
+
+    /**
+     * Remove a container.
+     *
+     * @param launchEnv   Docker client launch environment.
+     * @param containerId The container ID.
+     */
+    public void rm(@Nonnull EnvVars launchEnv, @Nonnull String containerId) throws IOException, InterruptedException {
+//        LaunchResult result;
+//        result = launch(launchEnv, false, "rm", "-f", containerId);
+//        if (result.getStatus() != 0) {
+//            throw new IOException(String.format("Failed to rm container '%s'.", containerId));
+//        }
+        LaunchResult result = launch(launchEnv, false, "-H", "tcp://m12n-ci-01-swarm-manager-01:2376", "service", "rm", containerId);
         if (result.getStatus() != 0) {
             throw new IOException(String.format("Failed to kill container '%s'.", containerId));
         }
@@ -174,55 +222,66 @@ public class DockerClient {
     }
 
     /**
-     * Remove a container.
-     * 
-     * @param launchEnv Docker client launch environment.
-     * @param containerId The container ID.
-     */
-    public void rm(@Nonnull EnvVars launchEnv, @Nonnull String containerId) throws IOException, InterruptedException {
-        LaunchResult result;
-        result = launch(launchEnv, false, "rm", "-f", containerId);
-        if (result.getStatus() != 0) {
-            throw new IOException(String.format("Failed to rm container '%s'.", containerId));
-        }
-    }
-
-    /**
      * Inspect a docker image/container.
+     *
      * @param launchEnv Docker client launch environment.
-     * @param objectId The image/container ID.
+     * @param objectId  The image/container ID.
      * @param fieldPath The data path of the data required e.g. {@code .NetworkSettings.IPAddress}.
      * @return The inspected field value. Null if the command failed
      */
-    public @CheckForNull String inspect(@Nonnull EnvVars launchEnv, @Nonnull String objectId, @Nonnull String fieldPath) throws IOException, InterruptedException {
-        LaunchResult result = launch(launchEnv, true, "inspect", "-f", String.format("{{%s}}", fieldPath), objectId);
+    public @CheckForNull
+    String inspect(@Nonnull EnvVars launchEnv, @Nonnull String objectId, @Nonnull String fieldPath) throws IOException, InterruptedException {
+        LaunchResult result = launch(launchEnv, true, "-H", "tcp://m12n-ci-01-swarm-manager-01:2376", "inspect", "-f", String.format("{{%s}}", fieldPath), objectId);
         if (result.getStatus() == 0) {
             return result.getOut();
         } else {
             return null;
         }
     }
-    
+
+    String getTaskId(@Nonnull EnvVars launchEnv, @Nonnull String service) throws IOException, InterruptedException {
+        LaunchResult result = launch(launchEnv, true, "-H", "tcp://m12n-ci-01-swarm-manager-01:2376", "service", "ps", "--format", "{{.ID}}", service);
+        if (result.getStatus() == 0) {
+            return result.getOut();
+        } else {
+            return null;
+        }
+    }
+
+    String getContainerId(@Nonnull EnvVars launchEnv, @Nonnull String taskId) throws IOException, InterruptedException {
+        //docker service ps --format "{{.ID}}" funny-bunny
+        LaunchResult result = launch(launchEnv, true, "-H", "tcp://m12n-ci-01-swarm-manager-01:2376", "inspect", "-f", "{{.Status.ContainerStatus.ContainerID}}", taskId);
+        if (result.getStatus() == 0) {
+            return result.getOut();
+        } else {
+            return null;
+        }
+        //docker inspect -f "{{.Status.ContainerStatus.ContainerID}}" iwuggwy3cpah
+    }
+
     /**
      * Inspect a docker image/container.
+     *
      * @param launchEnv Docker client launch environment.
-     * @param objectId The image/container ID.
+     * @param objectId  The image/container ID.
      * @param fieldPath The data path of the data required e.g. {@code .NetworkSettings.IPAddress}.
      * @return The inspected field value. May be an empty string
-     * @throws IOException Execution error. Also fails if cannot retrieve the requested field from the request
+     * @throws IOException          Execution error. Also fails if cannot retrieve the requested field from the request
      * @throws InterruptedException Interrupted
      * @since 1.1
      */
-    public @Nonnull String inspectRequiredField(@Nonnull EnvVars launchEnv, @Nonnull String objectId, 
-            @Nonnull String fieldPath) throws IOException, InterruptedException {
+    public @Nonnull
+    String inspectRequiredField(@Nonnull EnvVars launchEnv, @Nonnull String objectId,
+                                @Nonnull String fieldPath) throws IOException, InterruptedException {
         final String fieldValue = inspect(launchEnv, objectId, fieldPath);
         if (fieldValue == null) {
             throw new IOException("Cannot retrieve " + fieldPath + " from 'docker inspect " + objectId + "'");
         }
         return fieldValue;
     }
-    
-    private @CheckForNull Date getCreatedDate(@Nonnull EnvVars launchEnv, @Nonnull String objectId) throws IOException, InterruptedException {
+
+    private @CheckForNull
+    Date getCreatedDate(@Nonnull EnvVars launchEnv, @Nonnull String objectId) throws IOException, InterruptedException {
         String createdString = inspect(launchEnv, objectId, "json .Created");
         if (createdString == null) {
             return null;
@@ -242,7 +301,8 @@ public class DockerClient {
      * @return The {@link VersionNumber} instance if the version string matches the expected format,
      * otherwise {@code null}.
      */
-    public @CheckForNull VersionNumber version() throws IOException, InterruptedException {
+    public @CheckForNull
+    VersionNumber version() throws IOException, InterruptedException {
         LaunchResult result = launch(new EnvVars(), true, "-v");
         if (result.getStatus() == 0) {
             return parseVersionNumber(result.getOut());
@@ -250,10 +310,12 @@ public class DockerClient {
             return null;
         }
     }
-    
+
     private static final Pattern pattern = Pattern.compile("^(\\D+)(\\d+)\\.(\\d+)\\.(\\d+)(.*)");
+
     /**
      * Parse a Docker version string (e.g. "Docker version 1.5.0, build a8a31ef").
+     *
      * @param versionString The version string to parse.
      * @return The {@link VersionNumber} instance if the version string matched the
      * expected format, otherwise {@code null}.
@@ -267,15 +329,17 @@ public class DockerClient {
             return new VersionNumber(String.format("%s.%s.%s", major, minor, maint));
         } else {
             return null;
-        }        
+        }
     }
 
     private LaunchResult launch(@Nonnull EnvVars launchEnv, boolean quiet, @Nonnull String... args) throws IOException, InterruptedException {
         return launch(launchEnv, quiet, null, args);
     }
+
     private LaunchResult launch(@Nonnull EnvVars launchEnv, boolean quiet, FilePath pwd, @Nonnull String... args) throws IOException, InterruptedException {
         return launch(launchEnv, quiet, pwd, new ArgumentListBuilder(args));
     }
+
     private LaunchResult launch(@CheckForNull @Nonnull EnvVars launchEnv, boolean quiet, FilePath pwd, @Nonnull ArgumentListBuilder args) throws IOException, InterruptedException {
         // Prepend the docker command
         args.prepend(DockerTool.getExecutable(toolName, node, launcher.getListener(), launchEnv));
@@ -337,24 +401,33 @@ public class DockerClient {
     }
 
     public ContainerRecord getContainerRecord(@Nonnull EnvVars launchEnv, String containerId) throws IOException, InterruptedException {
-        String host = inspectRequiredField(launchEnv, containerId, ".Config.Hostname");
-        String containerName = inspectRequiredField(launchEnv, containerId, ".Name");
-        Date created = getCreatedDate(launchEnv, containerId);
-        String image = inspectRequiredField(launchEnv, containerId, ".Image");
+        try {
+            String host = inspectRequiredField(launchEnv, containerId, ".Config.Hostname");
+            String containerName = inspectRequiredField(launchEnv, containerId, ".Name");
+            Date created = getCreatedDate(launchEnv, containerId);
+            String image = inspectRequiredField(launchEnv, containerId, ".Image");
 
-        // TODO get tags and add for ContainerRecord
-        return new ContainerRecord(host, containerId, image, containerName,
-                (created != null ? created.getTime() : 0L), 
-                Collections.<String,String>emptyMap());
+            // TODO get tags and add for ContainerRecord
+            return new ContainerRecord(host, containerId, image, containerName,
+                (created != null ? created.getTime() : 0L),
+                Collections.<String, String>emptyMap());
+        } catch (IOException e) {
+            rm(launchEnv, this.serviceName);
+            throw e;
+        } catch (InterruptedException e) {
+            rm(launchEnv, this.serviceName);
+            throw e;
+        }
     }
 
     /**
      * Inspect the mounts of a container.
      * These might have been declared {@code VOLUME}s, or mounts defined via {@code --volume}.
-     * @param launchEnv Docker client launch environment.
+     *
+     * @param launchEnv   Docker client launch environment.
      * @param containerID The container ID.
      * @return a list of filesystem paths inside the container
-     * @throws IOException Execution error. Also fails if cannot retrieve the requested field from the request
+     * @throws IOException          Execution error. Also fails if cannot retrieve the requested field from the request
      * @throws InterruptedException Interrupted
      */
     public List<String> getVolumes(@Nonnull EnvVars launchEnv, String containerID) throws IOException, InterruptedException {
