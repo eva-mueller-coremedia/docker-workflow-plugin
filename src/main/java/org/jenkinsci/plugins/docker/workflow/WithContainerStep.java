@@ -24,7 +24,6 @@
 package org.jenkinsci.plugins.docker.workflow;
 
 import com.google.common.base.Optional;
-import org.jenkinsci.plugins.docker.workflow.client.DockerClient;
 import com.google.inject.Inject;
 import hudson.AbortException;
 import hudson.EnvVars;
@@ -39,30 +38,12 @@ import hudson.model.Node;
 import hudson.model.Run;
 import hudson.model.TaskListener;
 import hudson.slaves.WorkspaceList;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.Serializable;
-import java.nio.charset.Charset;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.Set;
-import java.util.TreeSet;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-import javax.annotation.Nonnull;
-
 import hudson.util.VersionNumber;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
-import javax.annotation.CheckForNull;
+import org.jenkinsci.plugins.docker.commons.fingerprint.ContainerRecord;
 import org.jenkinsci.plugins.docker.commons.fingerprint.DockerFingerprints;
 import org.jenkinsci.plugins.docker.commons.tools.DockerTool;
+import org.jenkinsci.plugins.docker.workflow.client.DockerClient;
+import org.jenkinsci.plugins.docker.workflow.client.DockerSwarmClient;
 import org.jenkinsci.plugins.workflow.steps.AbstractStepDescriptorImpl;
 import org.jenkinsci.plugins.workflow.steps.AbstractStepExecutionImpl;
 import org.jenkinsci.plugins.workflow.steps.AbstractStepImpl;
@@ -73,17 +54,40 @@ import org.jenkinsci.plugins.workflow.steps.StepContextParameter;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.DataBoundSetter;
 
+import javax.annotation.CheckForNull;
+import javax.annotation.Nonnull;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.Serializable;
+import java.nio.charset.Charset;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.stream.Collectors;
+
 public class WithContainerStep extends AbstractStepImpl {
-    
+
     private static final Logger LOGGER = Logger.getLogger(WithContainerStep.class.getName());
-    private final @Nonnull String image;
+    private final @Nonnull
+    String image;
     private String args;
     private String toolName;
 
-    @DataBoundConstructor public WithContainerStep(@Nonnull String image) {
+    @DataBoundConstructor
+    public WithContainerStep(@Nonnull String image) {
         this.image = image;
     }
-    
+
     public String getImage() {
         return image;
     }
@@ -101,31 +105,44 @@ public class WithContainerStep extends AbstractStepImpl {
         return toolName;
     }
 
-    @DataBoundSetter public void setToolName(String toolName) {
+    @DataBoundSetter
+    public void setToolName(String toolName) {
         this.toolName = Util.fixEmpty(toolName);
     }
 
-    private static void destroy(String container, Launcher launcher, Node node, EnvVars launcherEnv, String toolName) throws Exception {
-        new DockerClient(launcher, node, toolName).stop(launcherEnv, container);
+    private static void destroy(ServiceRecord serviceRecord, Launcher launcher, Node node, EnvVars launcherEnv, String toolName) throws Exception {
+        new DockerSwarmClient(launcher, node, toolName).stop(launcherEnv, serviceRecord);
     }
 
     // TODO switch to GeneralNonBlockingStepExecution
     public static class Execution extends AbstractStepExecutionImpl {
 
         private static final long serialVersionUID = 1;
-        @Inject(optional=true) private transient WithContainerStep step;
-        @StepContextParameter private transient Launcher launcher;
-        @StepContextParameter private transient TaskListener listener;
-        @StepContextParameter private transient FilePath workspace;
-        @StepContextParameter private transient EnvVars env;
-        @StepContextParameter private transient Computer computer;
-        @StepContextParameter private transient Node node;
+        @Inject(optional = true)
+        private transient WithContainerStep step;
+        @StepContextParameter
+        private transient Launcher launcher;
+        @StepContextParameter
+        private transient TaskListener listener;
+        @StepContextParameter
+        private transient FilePath workspace;
+        @StepContextParameter
+        private transient EnvVars env;
+        @StepContextParameter
+        private transient Computer computer;
+        @StepContextParameter
+        private transient Node node;
         @SuppressWarnings("rawtypes") // TODO not compiling on cloudbees.ci
-        @StepContextParameter private transient Run run;
-        private String container;
+        @StepContextParameter
+        private transient Run run;
+
+        private ContainerRecord container;
+        private ServiceRecord serviceRecord;
+
         private String toolName;
 
-        @Override public boolean start() throws Exception {
+        @Override
+        public boolean start() throws Exception {
             EnvVars envReduced = new EnvVars(env);
             EnvVars envHost = computer.getEnvironment();
             envReduced.entrySet().removeAll(envHost.entrySet());
@@ -138,7 +155,7 @@ public class WithContainerStep extends AbstractStepImpl {
             workspace.mkdirs(); // otherwise it may be owned by root when created for -v
             String ws = workspace.getRemote();
             toolName = step.toolName;
-            DockerClient dockerClient = new DockerClient(launcher, node, toolName);
+            DockerSwarmClient dockerClient = new DockerSwarmClient(launcher, node, toolName);
 
             VersionNumber dockerVersion = dockerClient.version();
             if (dockerVersion != null) {
@@ -183,22 +200,29 @@ public class WithContainerStep extends AbstractStepImpl {
                 volumes.put(tmp, tmp);
             }
 
-            container = dockerClient.run(env, step.image, step.args, ws, volumes, volumesFromContainers, envReduced, dockerClient.whoAmI(), /* expected to hang until killed */ "cat");
-//            final List<String> ps = dockerClient.listProcess(env, container);
-//            if (!ps.contains("cat")) {
-//                listener.error(
-//                    "The container started but didn't run the expected command. " +
-//                        "Please double check your ENTRYPOINT does execute the command passed as docker run argument, " +
-//                        "as required by official docker images (see https://github.com/docker-library/official-images#consistency for entrypoint consistency requirements).\n" +
-//                        "Alternatively you can force image entrypoint to be disabled by adding option `--entrypoint=''`.");
-//            }
+            serviceRecord = dockerClient.run(env, step.image, step.args, ws, volumes, volumesFromContainers, envReduced, dockerClient.whoAmI(), /* expected to hang until killed */ "cat");
+            container = serviceRecord.getContainerRecord();
+            try {
+                final List<String> ps = dockerClient.listProcess(env, container);
+                if (!ps.contains("cat")) {
+                    listener.error(
+                        "The container started but didn't run the expected command. " +
+                            "Please double check your ENTRYPOINT does execute the command passed as docker run argument, " +
+                            "as required by official docker images (see https://github.com/docker-library/official-images#consistency for entrypoint consistency requirements).\n" +
+                            "Alternatively you can force image entrypoint to be disabled by adding option `--entrypoint=''`.");
+                }
 
-            DockerFingerprints.addRunFacet(dockerClient.getContainerRecord(env, container), run);
-            ImageAction.add(step.image, run);
-            getContext().newBodyInvoker().
+                DockerFingerprints.addRunFacet(container, run);
+                ImageAction.add(step.image, run);
+                getContext().newBodyInvoker().
                     withContext(BodyInvoker.mergeLauncherDecorators(getContext().get(LauncherDecorator.class), new Decorator(container, envHost, ws, toolName, dockerVersion))).
-                    withCallback(new Callback(container, toolName)).
+                    withCallback(new Callback(serviceRecord, toolName)).
                     start();
+            } catch (IOException | InterruptedException | IllegalStateException e) {
+                dockerClient.rm(env, serviceRecord);
+                throw e;
+            }
+
             return false;
         }
 
@@ -207,10 +231,11 @@ public class WithContainerStep extends AbstractStepImpl {
             return ws.sibling(ws.getName() + System.getProperty(WorkspaceList.class.getName(), "@") + "tmp");
         }
 
-        @Override public void stop(@Nonnull Throwable cause) throws Exception {
+        @Override
+        public void stop(@Nonnull Throwable cause) throws Exception {
             if (container != null) {
                 LOGGER.log(Level.FINE, "stopping container " + container, cause);
-                destroy(container, launcher, getContext().get(Node.class), env, toolName);
+                destroy(serviceRecord, launcher, getContext().get(Node.class), env, toolName);
             }
         }
 
@@ -219,15 +244,16 @@ public class WithContainerStep extends AbstractStepImpl {
     private static class Decorator extends LauncherDecorator implements Serializable {
 
         private static final long serialVersionUID = 1;
-        private final String container;
+        private final ContainerRecord containerRecord;
         private final String[] envHost;
         private final String ws;
-        private final @CheckForNull String toolName;
+        private final @CheckForNull
+        String toolName;
         private final boolean hasEnv;
         private final boolean hasWorkdir;
 
-        Decorator(String container, EnvVars envHost, String ws, String toolName, VersionNumber dockerVersion) {
-            this.container = container;
+        Decorator(ContainerRecord containerRecord, EnvVars envHost, String ws, String toolName, VersionNumber dockerVersion) {
+            this.containerRecord = containerRecord;
             this.envHost = Util.mapToEnv(envHost);
             this.ws = ws;
             this.toolName = toolName;
@@ -235,16 +261,18 @@ public class WithContainerStep extends AbstractStepImpl {
             this.hasWorkdir = dockerVersion != null && dockerVersion.compareTo(new VersionNumber("17.12")) >= 0;
         }
 
-        @Override public Launcher decorate(final Launcher launcher, final Node node) {
+        @Override
+        public Launcher decorate(final Launcher launcher, final Node node) {
             return new Launcher.DecoratedLauncher(launcher) {
-                @Override public Proc launch(Launcher.ProcStarter starter) throws IOException {
+                @Override
+                public Proc launch(Launcher.ProcStarter starter) throws IOException {
                     String executable;
                     try {
                         executable = getExecutable();
                     } catch (InterruptedException x) {
                         throw new IOException(x);
                     }
-                    List<String> prefix = new ArrayList<>(Arrays.asList(executable, "exec"));
+                    List<String> prefix = new ArrayList<>(Arrays.asList(executable, " -H ", DockerSwarmClient.getDockerSwarmHostUri(containerRecord), "exec"));
                     List<Boolean> masksPrefixList = new ArrayList<>(Arrays.asList(false, false));
                     if (ws != null) {
                         FilePath cwd = starter.pwd();
@@ -263,7 +291,7 @@ public class WithContainerStep extends AbstractStepImpl {
                             }
                         }
                     } // otherwise we are loading an old serialized Decorator
-                    Set<String> envReduced = new TreeSet<String>(Arrays.asList(starter.envs()));
+                    Set<String> envReduced = new TreeSet<>(Arrays.asList(starter.envs()));
                     envReduced.removeAll(Arrays.asList(envHost));
 
                     // Remove PATH during `exec` as well.
@@ -281,17 +309,17 @@ public class WithContainerStep extends AbstractStepImpl {
                             prefix.add(e);
                             masksPrefixList.add(true);
                         }
-                        prefix.add(container);
+                        prefix.add(containerRecord.getContainerId());
                         masksPrefixList.add(false);
                     } else {
-                        prefix.add(container);
+                        prefix.add(containerRecord.getContainerId());
                         masksPrefixList.add(false);
                         prefix.add("env");
                         masksPrefixList.add(false);
                         prefix.addAll(envReduced);
                         masksPrefixList.addAll(envReduced.stream()
-                                                         .map(v -> true)
-                                                         .collect(Collectors.toList()));
+                            .map(v -> true)
+                            .collect(Collectors.toList()));
                     }
 
                     boolean[] originalMasks = starter.masks();
@@ -313,16 +341,19 @@ public class WithContainerStep extends AbstractStepImpl {
 
                     return super.launch(starter);
                 }
-                @Override public void kill(Map<String,String> modelEnvVars) throws IOException, InterruptedException {
+
+                @Override
+                public void kill(Map<String, String> modelEnvVars) throws IOException, InterruptedException {
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
                     String executable = getExecutable();
-                    if (getInner().launch().cmds(executable, "exec", container, "ps", "-A", "-o", "pid,command", "e").stdout(baos).quiet(true).start().joinWithTimeout(DockerClient.CLIENT_TIMEOUT, TimeUnit.SECONDS, listener) != 0) {
+                    if (getInner().launch().cmds(executable, " -H ", DockerSwarmClient.getDockerSwarmHostUri(containerRecord), "exec", containerRecord.getContainerId(), "ps", "-A", "-o", "pid,command", "e").stdout(baos).quiet(true).start().joinWithTimeout(DockerClient.CLIENT_TIMEOUT, TimeUnit.SECONDS, listener) != 0) {
                         throw new IOException("failed to run ps");
                     }
                     List<String> pids = new ArrayList<String>();
-                    LINE: for (String line : baos.toString(Charset.defaultCharset().name()).split("\n")) {
-                        for (Map.Entry<String,String> entry : modelEnvVars.entrySet()) {
-                            // TODO this is imprecise: false positive when argv happens to match KEY=value even if environment does not. Cf. trick in BourneShellScript.
+                    LINE:
+                    for (String line : baos.toString(Charset.defaultCharset().name()).split("\n")) {
+                        for (Map.Entry<String, String> entry : modelEnvVars.entrySet()) {
+                            //   TODO this is imprecise: false positive when argv happens to match KEY=value even if environment does not. Cf. trick in BourneShellScript.
                             if (!line.contains(entry.getKey() + "=" + entry.getValue())) {
                                 continue LINE;
                             }
@@ -336,13 +367,14 @@ public class WithContainerStep extends AbstractStepImpl {
                     }
                     LOGGER.log(Level.FINE, "killing {0}", pids);
                     if (!pids.isEmpty()) {
-                        List<String> cmds = new ArrayList<>(Arrays.asList(executable, "exec", container, "kill"));
+                        List<String> cmds = new ArrayList<>(Arrays.asList(executable, "exec", containerRecord.getContainerId(), "kill"));
                         cmds.addAll(pids);
                         if (getInner().launch().cmds(cmds).quiet(true).start().joinWithTimeout(DockerClient.CLIENT_TIMEOUT, TimeUnit.SECONDS, listener) != 0) {
                             throw new IOException("failed to run kill");
                         }
                     }
                 }
+
                 private String getExecutable() throws IOException, InterruptedException {
                     EnvVars env = new EnvVars();
                     for (String pair : envHost) {
@@ -358,39 +390,45 @@ public class WithContainerStep extends AbstractStepImpl {
     private static class Callback extends BodyExecutionCallback.TailCall {
 
         private static final long serialVersionUID = 1;
-        private final String container;
+        private final ServiceRecord serviceRecord;
         private final String toolName;
 
-        Callback(String container, String toolName) {
-            this.container = container;
+        Callback(ServiceRecord serviceRecord, String toolName) {
+            this.serviceRecord = serviceRecord;
             this.toolName = toolName;
         }
 
-        @Override protected void finished(StepContext context) throws Exception {
-            destroy(container, context.get(Launcher.class), context.get(Node.class), context.get(EnvVars.class), toolName);
+        @Override
+        protected void finished(StepContext context) throws Exception {
+            destroy(serviceRecord, context.get(Launcher.class), context.get(Node.class), context.get(EnvVars.class), toolName);
         }
 
     }
 
-    @Extension public static class DescriptorImpl extends AbstractStepDescriptorImpl {
+    @Extension
+    public static class DescriptorImpl extends AbstractStepDescriptorImpl {
 
         public DescriptorImpl() {
             super(Execution.class);
         }
 
-        @Override public String getFunctionName() {
+        @Override
+        public String getFunctionName() {
             return "withDockerContainer";
         }
 
-        @Override public String getDisplayName() {
+        @Override
+        public String getDisplayName() {
             return "Run build steps inside a Docker container";
         }
 
-        @Override public boolean takesImplicitBlockArgument() {
+        @Override
+        public boolean takesImplicitBlockArgument() {
             return true;
         }
 
-        @Override public boolean isAdvanced() {
+        @Override
+        public boolean isAdvanced() {
             return true;
         }
 

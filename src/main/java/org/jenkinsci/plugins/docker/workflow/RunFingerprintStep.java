@@ -23,7 +23,6 @@
  */
 package org.jenkinsci.plugins.docker.workflow;
 
-import org.jenkinsci.plugins.docker.workflow.client.DockerClient;
 import com.google.inject.Inject;
 import hudson.EnvVars;
 import hudson.Extension;
@@ -32,6 +31,7 @@ import hudson.Util;
 import hudson.model.Node;
 import hudson.model.Run;
 import org.jenkinsci.plugins.docker.commons.fingerprint.DockerFingerprints;
+import org.jenkinsci.plugins.docker.workflow.client.DockerSwarmClient;
 import org.jenkinsci.plugins.workflow.steps.AbstractStepDescriptorImpl;
 import org.jenkinsci.plugins.workflow.steps.AbstractStepImpl;
 import org.jenkinsci.plugins.workflow.steps.AbstractSynchronousNonBlockingStepExecution;
@@ -77,12 +77,12 @@ public class RunFingerprintStep extends AbstractStepImpl {
 
         @SuppressWarnings("SynchronizeOnNonFinalField") // run is quasi-final
         @Override protected Void run() throws Exception {
-            DockerClient client = new DockerClient(launcher, node, step.toolName);
-            DockerFingerprints.addRunFacet(client.getContainerRecord(env, step.containerId), run);
-            String image = client.inspect(env, step.containerId, ".Config.Image");
-            if (image != null) {
-                ImageAction.add(image, run);
-            }
+//            DockerSwarmClient client = new DockerSwarmClient(launcher, node, step.toolName);
+//            DockerFingerprints.addRunFacet(client.getContainerRecord(env, step.containerId), run);
+//            String image = client.inspect(env, step.containerId, ".Config.Image");
+//            if (image != null) {
+//                ImageAction.add(image, run);
+//            }
             return null;
         }
 

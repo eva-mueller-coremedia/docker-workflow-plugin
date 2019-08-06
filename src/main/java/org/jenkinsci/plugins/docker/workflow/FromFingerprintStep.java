@@ -23,8 +23,6 @@
  */
 package org.jenkinsci.plugins.docker.workflow;
 
-import java.util.Map;
-
 import com.google.inject.Inject;
 import hudson.AbortException;
 import hudson.EnvVars;
@@ -35,13 +33,15 @@ import hudson.Util;
 import hudson.model.Node;
 import hudson.model.Run;
 import org.jenkinsci.plugins.docker.commons.fingerprint.DockerFingerprints;
-import org.jenkinsci.plugins.docker.workflow.client.DockerClient;
+import org.jenkinsci.plugins.docker.workflow.client.DockerSwarmClient;
 import org.jenkinsci.plugins.workflow.steps.AbstractStepDescriptorImpl;
 import org.jenkinsci.plugins.workflow.steps.AbstractStepImpl;
 import org.jenkinsci.plugins.workflow.steps.AbstractSynchronousNonBlockingStepExecution;
 import org.jenkinsci.plugins.workflow.steps.StepContextParameter;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.DataBoundSetter;
+
+import java.util.Map;
 
 /**
  * @deprecated Fingerprints produced by this step are not used anywhere, and the parsing code has major limitations. See https://github.com/jenkinsci/docker-workflow-plugin/pull/149#issuecomment-451305522 and https://groups.google.com/d/msg/jenkinsci-dev/k13SfZcBWVg/iQghmCQrEAAJ
@@ -56,7 +56,8 @@ public class FromFingerprintStep extends AbstractStepImpl {
     private String toolName;
     private String commandLine;
 
-    @DataBoundConstructor public FromFingerprintStep(String dockerfile, String image) {
+    @DataBoundConstructor
+    public FromFingerprintStep(String dockerfile, String image) {
         this.dockerfile = dockerfile;
         this.image = image;
     }
@@ -73,7 +74,8 @@ public class FromFingerprintStep extends AbstractStepImpl {
         return toolName;
     }
 
-    @DataBoundSetter public void setToolName(String toolName) {
+    @DataBoundSetter
+    public void setToolName(String toolName) {
         this.toolName = Util.fixEmpty(toolName);
     }
 
@@ -81,7 +83,8 @@ public class FromFingerprintStep extends AbstractStepImpl {
         return commandLine;
     }
 
-    @DataBoundSetter public void setCommandLine(String commandLine) {
+    @DataBoundSetter
+    public void setCommandLine(String commandLine) {
         this.commandLine = commandLine;
     }
 
@@ -89,15 +92,22 @@ public class FromFingerprintStep extends AbstractStepImpl {
 
         private static final long serialVersionUID = 1L;
 
-        @Inject(optional=true) private transient FromFingerprintStep step;
+        @Inject(optional = true)
+        private transient FromFingerprintStep step;
         @SuppressWarnings("rawtypes") // TODO not compiling on cloudbees.ci
-        @StepContextParameter private transient Run run;
-        @StepContextParameter private transient Launcher launcher;
-        @StepContextParameter private transient EnvVars env;
-        @StepContextParameter private transient FilePath workspace;
-        @StepContextParameter private transient Node node;
+        @StepContextParameter
+        private transient Run run;
+        @StepContextParameter
+        private transient Launcher launcher;
+        @StepContextParameter
+        private transient EnvVars env;
+        @StepContextParameter
+        private transient FilePath workspace;
+        @StepContextParameter
+        private transient Node node;
 
-        @Override protected Void run() throws Exception {
+        @Override
+        protected Void run() throws Exception {
             FilePath dockerfilePath = workspace.child(step.dockerfile);
             Dockerfile dockerfile = new Dockerfile(dockerfilePath);
             Map<String, String> buildArgs = DockerUtils.parseBuildArgs(dockerfile, step.commandLine);
@@ -110,7 +120,7 @@ public class FromFingerprintStep extends AbstractStepImpl {
                 // Fortunately, Docker uses the same EnvVar syntax as Jenkins :)
                 fromImage = Util.replaceMacro(fromImage, buildArgs);
             }
-            DockerClient client = new DockerClient(launcher, node, step.toolName);
+            DockerSwarmClient client = new DockerSwarmClient(launcher, node, step.toolName);
             String descendantImageId = client.inspectRequiredField(env, step.image, FIELD_ID);
             if (fromImage.equals("scratch")) { // we just made a base image
                 DockerFingerprints.addFromFacet(null, descendantImageId, run);
@@ -123,21 +133,25 @@ public class FromFingerprintStep extends AbstractStepImpl {
 
     }
 
-    @Extension public static class DescriptorImpl extends AbstractStepDescriptorImpl {
+    @Extension
+    public static class DescriptorImpl extends AbstractStepDescriptorImpl {
 
         public DescriptorImpl() {
             super(Execution.class);
         }
 
-        @Override public String getFunctionName() {
+        @Override
+        public String getFunctionName() {
             return "dockerFingerprintFrom";
         }
 
-        @Override public String getDisplayName() {
+        @Override
+        public String getDisplayName() {
             return "Record trace of a Docker image used in FROM";
         }
 
-        @Override public boolean isAdvanced() {
+        @Override
+        public boolean isAdvanced() {
             return true;
         }
 
