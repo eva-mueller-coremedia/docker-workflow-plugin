@@ -142,6 +142,9 @@ public class DockerSwarmClient {
 
         argb.add("-H", DOCKER_SWARM_HOST_URI);
         argb.add("service", "create", "--constraint", "node.role==worker", "--name", serviceName, "-t", "-d", "-u", user, "--replicas", "1", "--restart-condition", "none");
+        /*
+        docker service create --mount type=volume,volume-opt=o=addr=HAM-ITS0867,volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work,volume-opt=type=nfs,source=work,target=/work --replicas 1 --name testnfs alpine /bin/sh -c "ls -al /work/workspace"
+         */
         if (args != null) {
             argb.addTokenized(args);
         }
@@ -149,9 +152,17 @@ public class DockerSwarmClient {
         if (workdir != null) {
             argb.add("-w", workdir);
         }
+        /**
+         * docker service create
+         * --mount type=volume,volume-opt=o=addr=HAM-ITS0867,volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work,volume-opt=type=nfs,source=work,target=/work
+         * --replicas 1 --name testnfs alpine /bin/sh -c "ls -al /work/workspace"
+         */
+        argb.add("--mount", "type=volume,volume-opt=o=addr=" + getJenkinsHostName() + ",volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work/workspace,volume-opt=type=nfs,source=workspace,target=/Users/emueller/git-repositories/docker-workflow-plugin/work/workspace");
+        //argb.add("--mount", "type=volume,volume-opt=o=addr=" + getJenkinsHostName() + ",volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work/workspace/test@tmp,volume-opt=type=nfs,source=test@tmp,target=/Users/emueller/git-repositories/docker-workflow-plugin/work/workspace/test@tmp");
         for (Map.Entry<String, String> volume : volumes.entrySet()) {
+//            argb.add("--mount", "type=volume,volume-opt=o=addr=" + getJenkinsHostName() + ",volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work,volume-opt=type=nfs,source=" + volume.getValue() + ",target=" + volume.getValue());
             // TODO: mount rw,z - as in DockerClient?
-            argb.add("--mount", "target=" + volume.getValue());
+//            argb.add("--mount", "target=" + volume.getValue());
         }
         for (String containerId : volumesFromContainers) {
             argb.add("--volumes-from", containerId);
@@ -259,7 +270,7 @@ public class DockerSwarmClient {
      */
     public @CheckForNull
     String inspect(@Nonnull EnvVars launchEnv, @Nonnull String objectId, @Nonnull String fieldPath) throws IOException, InterruptedException {
-        LaunchResult result = launch(launchEnv, true, "-H", DOCKER_SWARM_HOST_URI, "inspect", "-f", String.format("{{%s}}", fieldPath), objectId);
+        LaunchResult result = launch(launchEnv, false, "-H", DOCKER_SWARM_HOST_URI, "inspect", "-f", String.format("{{%s}}", fieldPath), objectId);
         if (result.getStatus() == 0) {
             return result.getOut();
         }
@@ -268,7 +279,7 @@ public class DockerSwarmClient {
 
     private String getTaskId(@Nonnull EnvVars launchEnv, @Nonnull String service) throws IOException, InterruptedException {
         //docker service ps --filter 'desired-state=running' $SERVICE_NAME -q
-        LaunchResult result = launch(launchEnv, true, "-H", DOCKER_SWARM_HOST_URI, "service", "ps", "--filter", "desired-state=running", service, "-q");
+        LaunchResult result = launch(launchEnv, false, "-H", DOCKER_SWARM_HOST_URI, "service", "ps", "--filter", "desired-state=running", service, "-q");
         if (result.getStatus() == 0) {
             return result.getOut();
         }
@@ -277,7 +288,7 @@ public class DockerSwarmClient {
 
     private String getNodeId(@Nonnull EnvVars launchEnv, @Nonnull String taskId) throws IOException, InterruptedException {
         //NODE_ID=$(docker inspect --format '{{ .NodeID }}' $TASK_ID)
-        LaunchResult result = launch(launchEnv, true, "-H", DOCKER_SWARM_HOST_URI, "inspect", "--format", "{{ .NodeID }}", taskId);
+        LaunchResult result = launch(launchEnv, false, "-H", DOCKER_SWARM_HOST_URI, "inspect", "--format", "{{ .NodeID }}", taskId);
         if (result.getStatus() == 0) {
             return result.getOut();
         }
@@ -286,7 +297,7 @@ public class DockerSwarmClient {
 
     private String getContainerId(@Nonnull EnvVars launchEnv, @Nonnull String taskId) throws IOException, InterruptedException {
         //CONTAINER_ID=$(docker inspect --format '{{ .Status.ContainerStatus.ContainerID }}' $TASK_ID)
-        LaunchResult result = launch(launchEnv, true, "-H", DOCKER_SWARM_HOST_URI, "inspect", "--format", "{{.Status.ContainerStatus.ContainerID}}", taskId);
+        LaunchResult result = launch(launchEnv, false, "-H", DOCKER_SWARM_HOST_URI, "inspect", "--format", "{{.Status.ContainerStatus.ContainerID}}", taskId);
         if (result.getStatus() == 0) {
             return result.getOut();
         }
@@ -295,7 +306,7 @@ public class DockerSwarmClient {
 
     private String getContainerName(@Nonnull EnvVars launchEnv, @Nonnull String host, @Nonnull String containerId) throws IOException, InterruptedException {
         //docker -H tcp://m12n-ci-01-swarm-node-01.coremedia.vm:2376 ps --filter 'id=42e3f7123f2b' --format {{.Names}}
-        LaunchResult result = launch(launchEnv, true, "-H", getDockerSwarmHostUri(host), "ps", "--filter", "id=" + containerId, "--format", "{{.Names}}");
+        LaunchResult result = launch(launchEnv, false, "-H", getDockerSwarmHostUri(host), "ps", "--filter", "id=" + containerId, "--format", "{{.Names}}");
         if (result.getStatus() == 0) {
             return result.getOut();
         }
@@ -304,7 +315,7 @@ public class DockerSwarmClient {
 
     private String getNodeHost(@Nonnull EnvVars launchEnv, @Nonnull String nodeId) throws IOException, InterruptedException {
         //NODE_HOST=$(docker node inspect --format '{{ .Description.Hostname }}' $NODE_ID)
-        LaunchResult result = launch(launchEnv, true, "-H", DOCKER_SWARM_HOST_URI, "inspect", "--format", "{{.Description.Hostname}}", nodeId);
+        LaunchResult result = launch(launchEnv, false, "-H", DOCKER_SWARM_HOST_URI, "inspect", "--format", "{{.Description.Hostname}}", nodeId);
         if (result.getStatus() == 0) {
             return result.getOut();
         }
@@ -472,7 +483,7 @@ public class DockerSwarmClient {
      * @throws InterruptedException Interrupted
      */
     public List<String> getVolumes(@Nonnull EnvVars launchEnv, String containerID) throws IOException, InterruptedException {
-        LaunchResult result = launch(launchEnv, true, "inspect", "-f", "{{range.Mounts}}{{.Destination}}\n{{end}}", containerID);
+        LaunchResult result = launch(launchEnv, false, "inspect", "-f", "{{range.Mounts}}{{.Destination}}\n{{end}}", containerID);
         if (result.getStatus() != 0) {
             return Collections.emptyList();
         }
