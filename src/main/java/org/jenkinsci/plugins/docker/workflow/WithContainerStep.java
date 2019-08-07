@@ -339,7 +339,15 @@ public class WithContainerStep extends AbstractStepImpl {
                     System.arraycopy(originalMasks, 0, masks, prefix.size(), originalMasks.length);
                     starter.masks(masks);
 
-                    return super.launch(starter);
+                    starter.quiet(false);
+
+                    Proc procx;
+                    try {
+                        procx = super.launch(starter);
+                    } catch (IOException e) {
+                        throw e;
+                    }
+                    return procx;
                 }
 
                 @Override
