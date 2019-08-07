@@ -272,7 +272,7 @@ public class WithContainerStep extends AbstractStepImpl {
                     } catch (InterruptedException x) {
                         throw new IOException(x);
                     }
-                    List<String> prefix = new ArrayList<>(Arrays.asList(executable, " -H ", DockerSwarmClient.getDockerSwarmHostUri(containerRecord), "exec"));
+                    List<String> prefix = new ArrayList<>(Arrays.asList(executable, "-H", DockerSwarmClient.getDockerSwarmHostUri(containerRecord), "exec"));
                     List<Boolean> masksPrefixList = new ArrayList<>(Arrays.asList(false, false));
                     if (ws != null) {
                         FilePath cwd = starter.pwd();
