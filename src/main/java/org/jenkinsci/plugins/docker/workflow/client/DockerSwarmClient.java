@@ -157,16 +157,25 @@ public class DockerSwarmClient {
          * --mount type=volume,volume-opt=o=addr=HAM-ITS0867,volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work,volume-opt=type=nfs,source=work,target=/work
          * --replicas 1 --name testnfs alpine /bin/sh -c "ls -al /work/workspace"
          */
+        // TODO: fix hard coded nfs mount
         argb.add("--mount", "type=volume,volume-opt=o=addr=" + getJenkinsHostName() + ",volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work/workspace,volume-opt=type=nfs,source=workspace,target=/Users/emueller/git-repositories/docker-workflow-plugin/work/workspace");
+//        argb.add("--mount", "type=bind,source=/usr/bin/docker,target=/usr/bin/docker");
         //argb.add("--mount", "type=volume,volume-opt=o=addr=" + getJenkinsHostName() + ",volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work/workspace/test@tmp,volume-opt=type=nfs,source=test@tmp,target=/Users/emueller/git-repositories/docker-workflow-plugin/work/workspace/test@tmp");
         for (Map.Entry<String, String> volume : volumes.entrySet()) {
 //            argb.add("--mount", "type=volume,volume-opt=o=addr=" + getJenkinsHostName() + ",volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work,volume-opt=type=nfs,source=" + volume.getValue() + ",target=" + volume.getValue());
             // TODO: mount rw,z - as in DockerClient?
 //            argb.add("--mount", "target=" + volume.getValue());
         }
-        for (String containerId : volumesFromContainers) {
-            argb.add("--volumes-from", containerId);
-        }
+//        argb.add("--mount", "target=/var/run/docker.sock");
+//        argb.add("--mount", "target=/usr/local/bin/docker");
+//        argb.add("--group", "root");
+//        argb.add("--mount", "target=/etc/passwd,readonly");
+//        argb.add("--mount", "target=/etc/group,readonly");
+
+// TODO: re-add
+//        for (String containerId : volumesFromContainers) {
+//            argb.add("--volumes-from", containerId);
+//        }
         for (Map.Entry<String, String> variable : containerEnv.entrySet()) {
             argb.add("-e");
             argb.addMasked(variable.getKey() + "=" + variable.getValue());
@@ -432,10 +441,10 @@ public class DockerSwarmClient {
      */
     public String whoAmI() throws IOException, InterruptedException {
         ByteArrayOutputStream userId = new ByteArrayOutputStream();
-        launcher.launch().cmds("id", "-u").quiet(true).stdout(userId).start().joinWithTimeout(CLIENT_TIMEOUT, TimeUnit.SECONDS, launcher.getListener());
+        launcher.launch().cmds("id", "-u").quiet(false).stdout(userId).start().joinWithTimeout(CLIENT_TIMEOUT, TimeUnit.SECONDS, launcher.getListener());
 
         ByteArrayOutputStream groupId = new ByteArrayOutputStream();
-        launcher.launch().cmds("id", "-g").quiet(true).stdout(groupId).start().joinWithTimeout(CLIENT_TIMEOUT, TimeUnit.SECONDS, launcher.getListener());
+        launcher.launch().cmds("id", "-g").quiet(false).stdout(groupId).start().joinWithTimeout(CLIENT_TIMEOUT, TimeUnit.SECONDS, launcher.getListener());
 
         final String charsetName = Charset.defaultCharset().name();
         return String.format("%s:%s", userId.toString(charsetName).trim(), groupId.toString(charsetName).trim());
