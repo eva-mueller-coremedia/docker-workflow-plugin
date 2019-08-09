@@ -104,7 +104,7 @@ public class DockerSwarmClient {
      * @return E.g. master-ci or toko-ci-01
      */
     private static String getJenkinsHostName() throws UnknownHostException {
-        return InetAddress.getLocalHost().getCanonicalHostName().split("\\.")[0];
+        return "HAM-ITS0867";//InetAddress.getLocalHost().getCanonicalHostName().split("\\.")[0];
     }
 
     private static String getRandomString() {
@@ -142,6 +142,7 @@ public class DockerSwarmClient {
 
         argb.add("-H", DOCKER_SWARM_HOST_URI);
         argb.add("service", "create", "--constraint", "node.role==worker", "--name", serviceName, "-t", "-d", "-u", user, "--replicas", "1", "--restart-condition", "none");
+//        argb.add("service", "create", "--constraint", "node.role==worker", "--name", serviceName, "-t", "-d", "-u", "0:0", "--replicas", "1", "--restart-condition", "none");
         /*
         docker service create --mount type=volume,volume-opt=o=addr=HAM-ITS0867,volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work,volume-opt=type=nfs,source=work,target=/work --replicas 1 --name testnfs alpine /bin/sh -c "ls -al /work/workspace"
          */
@@ -158,13 +159,13 @@ public class DockerSwarmClient {
          * --replicas 1 --name testnfs alpine /bin/sh -c "ls -al /work/workspace"
          */
         // TODO: fix hard coded nfs mount
-        argb.add("--mount", "type=volume,volume-opt=o=addr=" + getJenkinsHostName() + ",volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work/workspace,volume-opt=type=nfs,source=workspace,target=/Users/emueller/git-repositories/docker-workflow-plugin/work/workspace");
+        argb.add("--mount", "type=volume,volume-opt=o=addr=" + getJenkinsHostName() + ",volume-opt=device=:/Users/emueller/jenkins-local-nfs/workspace,volume-opt=type=nfs,source=workspace,target=/Users/emueller/jenkins-local-nfs/workspace");
 //        argb.add("--mount", "type=bind,source=/usr/bin/docker,target=/usr/bin/docker");
         //argb.add("--mount", "type=volume,volume-opt=o=addr=" + getJenkinsHostName() + ",volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work/workspace/test@tmp,volume-opt=type=nfs,source=test@tmp,target=/Users/emueller/git-repositories/docker-workflow-plugin/work/workspace/test@tmp");
         for (Map.Entry<String, String> volume : volumes.entrySet()) {
 //            argb.add("--mount", "type=volume,volume-opt=o=addr=" + getJenkinsHostName() + ",volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work,volume-opt=type=nfs,source=" + volume.getValue() + ",target=" + volume.getValue());
             // TODO: mount rw,z - as in DockerClient?
-//            argb.add("--mount", "target=" + volume.getValue());
+            argb.add("--mount", "target=" + volume.getValue());
         }
 //        argb.add("--mount", "target=/var/run/docker.sock");
 //        argb.add("--mount", "target=/usr/local/bin/docker");
@@ -173,9 +174,9 @@ public class DockerSwarmClient {
 //        argb.add("--mount", "target=/etc/group,readonly");
 
 // TODO: re-add
-//        for (String containerId : volumesFromContainers) {
-//            argb.add("--volumes-from", containerId);
-//        }
+        for (String containerId : volumesFromContainers) {
+            argb.add("--volumes-from", containerId);
+        }
         for (Map.Entry<String, String> variable : containerEnv.entrySet()) {
             argb.add("-e");
             argb.addMasked(variable.getKey() + "=" + variable.getValue());
@@ -286,6 +287,15 @@ public class DockerSwarmClient {
         throw new IOException("Cannot retrieve " + fieldPath + " from 'docker inspect " + objectId + "'");
     }
 
+    public @CheckForNull
+    String inspectService(@Nonnull EnvVars launchEnv, @Nonnull String objectId, @Nonnull String fieldPath) throws IOException, InterruptedException {
+        LaunchResult result = launch(launchEnv, false, "-H", DOCKER_SWARM_HOST_URI, "service", "inspect", "-f", String.format("{{%s}}", fieldPath), objectId);
+        if (result.getStatus() == 0) {
+            return result.getOut();
+        }
+        throw new IOException("Cannot retrieve " + fieldPath + " from 'docker inspect " + objectId + "'");
+    }
+
     private String getTaskId(@Nonnull EnvVars launchEnv, @Nonnull String service) throws IOException, InterruptedException {
         //docker service ps --filter 'desired-state=running' $SERVICE_NAME -q
         LaunchResult result = launch(launchEnv, false, "-H", DOCKER_SWARM_HOST_URI, "service", "ps", "--filter", "desired-state=running", service, "-q");
@@ -354,7 +364,7 @@ public class DockerSwarmClient {
 
     private @CheckForNull
     Date getCreatedDate(@Nonnull EnvVars launchEnv, @Nonnull String objectId) throws IOException, InterruptedException {
-        String createdString = inspect(launchEnv, objectId, ".CreatedAt");
+        String createdString = inspectService(launchEnv, objectId, ".CreatedAt");
         if (createdString == null) {
             return null;
         }
@@ -441,10 +451,10 @@ public class DockerSwarmClient {
      */
     public String whoAmI() throws IOException, InterruptedException {
         ByteArrayOutputStream userId = new ByteArrayOutputStream();
-        launcher.launch().cmds("id", "-u").quiet(false).stdout(userId).start().joinWithTimeout(CLIENT_TIMEOUT, TimeUnit.SECONDS, launcher.getListener());
+        launcher.launch().cmds("id", "-u").quiet(true).stdout(userId).start().joinWithTimeout(CLIENT_TIMEOUT, TimeUnit.SECONDS, launcher.getListener());
 
         ByteArrayOutputStream groupId = new ByteArrayOutputStream();
-        launcher.launch().cmds("id", "-g").quiet(false).stdout(groupId).start().joinWithTimeout(CLIENT_TIMEOUT, TimeUnit.SECONDS, launcher.getListener());
+        launcher.launch().cmds("id", "-g").quiet(true).stdout(groupId).start().joinWithTimeout(CLIENT_TIMEOUT, TimeUnit.SECONDS, launcher.getListener());
 
         final String charsetName = Charset.defaultCharset().name();
         return String.format("%s:%s", userId.toString(charsetName).trim(), groupId.toString(charsetName).trim());
@@ -474,7 +484,7 @@ public class DockerSwarmClient {
         //            String host = DOCKER_SWARM_HOST_URI.replaceFirst("tcp://", "");//inspectRequiredField(launchEnv, serviceName, ".Config.Hostname");
 //            String containerName = serviceName;//inspectRequiredField(launchEnv, serviceName, ".Name");
         Date created = getCreatedDate(launchEnv, serviceName);
-        String imageLong = inspectRequiredField(launchEnv, serviceName, ".Spec.TaskTemplate.ContainerSpec.Image");
+        String imageLong = inspectService(launchEnv, serviceName, ".Spec.TaskTemplate.ContainerSpec.Image");
         // TODO get tags and add for ContainerRecord
         return new ContainerRecord(containerHost, containerId, getLastPart(imageLong, ":"), containerName,
             (created != null ? created.getTime() : 0L),
