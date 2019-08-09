@@ -42,7 +42,6 @@ import hudson.util.VersionNumber;
 import org.jenkinsci.plugins.docker.commons.fingerprint.ContainerRecord;
 import org.jenkinsci.plugins.docker.commons.fingerprint.DockerFingerprints;
 import org.jenkinsci.plugins.docker.commons.tools.DockerTool;
-import org.jenkinsci.plugins.docker.workflow.client.DockerClient;
 import org.jenkinsci.plugins.docker.workflow.client.DockerSwarmClient;
 import org.jenkinsci.plugins.workflow.steps.AbstractStepDescriptorImpl;
 import org.jenkinsci.plugins.workflow.steps.AbstractStepExecutionImpl;
@@ -354,7 +353,7 @@ public class WithContainerStep extends AbstractStepImpl {
                 public void kill(Map<String, String> modelEnvVars) throws IOException, InterruptedException {
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
                     String executable = getExecutable();
-                    if (getInner().launch().cmds(executable, " -H ", DockerSwarmClient.getDockerSwarmHostUri(containerRecord), "exec", containerRecord.getContainerId(), "ps", "-A", "-o", "pid,command", "e").stdout(baos).quiet(true).start().joinWithTimeout(DockerClient.CLIENT_TIMEOUT, TimeUnit.SECONDS, listener) != 0) {
+                    if (getInner().launch().cmds(executable, " -H ", DockerSwarmClient.getDockerSwarmHostUri(containerRecord), "exec", containerRecord.getContainerId(), "ps", "-A", "-o", "pid,command", "e").stdout(baos).quiet(true).start().joinWithTimeout(DockerSwarmClient.CLIENT_TIMEOUT, TimeUnit.SECONDS, listener) != 0) {
                         throw new IOException("failed to run ps");
                     }
                     List<String> pids = new ArrayList<String>();
@@ -377,7 +376,7 @@ public class WithContainerStep extends AbstractStepImpl {
                     if (!pids.isEmpty()) {
                         List<String> cmds = new ArrayList<>(Arrays.asList(executable, "exec", containerRecord.getContainerId(), "kill"));
                         cmds.addAll(pids);
-                        if (getInner().launch().cmds(cmds).quiet(true).start().joinWithTimeout(DockerClient.CLIENT_TIMEOUT, TimeUnit.SECONDS, listener) != 0) {
+                        if (getInner().launch().cmds(cmds).quiet(true).start().joinWithTimeout(DockerSwarmClient.CLIENT_TIMEOUT, TimeUnit.SECONDS, listener) != 0) {
                             throw new IOException("failed to run kill");
                         }
                     }

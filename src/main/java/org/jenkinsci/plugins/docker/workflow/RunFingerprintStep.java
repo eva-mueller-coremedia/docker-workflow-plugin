@@ -77,7 +77,7 @@ public class RunFingerprintStep extends AbstractStepImpl {
 
         @SuppressWarnings("SynchronizeOnNonFinalField") // run is quasi-final
         @Override protected Void run() throws Exception {
-//            DockerSwarmClient client = new DockerSwarmClient(launcher, node, step.toolName);
+            DockerSwarmClient client = new DockerSwarmClient(launcher, node, step.toolName);
 //            DockerFingerprints.addRunFacet(client.getContainerRecord(env, step.containerId), run);
 //            String image = client.inspect(env, step.containerId, ".Config.Image");
 //            if (image != null) {

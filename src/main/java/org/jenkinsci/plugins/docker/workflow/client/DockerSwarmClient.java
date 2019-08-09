@@ -44,7 +44,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.StringReader;
-import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.charset.Charset;
 import java.text.ParseException;
@@ -141,7 +140,7 @@ public class DockerSwarmClient {
         ArgumentListBuilder argb = new ArgumentListBuilder();
 
         argb.add("-H", DOCKER_SWARM_HOST_URI);
-        argb.add("service", "create", "--constraint", "node.role==worker", "--name", serviceName, "-t", "-d", "-u", user, "--replicas", "1", "--restart-condition", "none");
+        argb.add("service", "create", "--constraint", "node.role==worker", "--name", serviceName, "-t", "-d", "-u", "1730192763:993", "--replicas", "1", "--restart-condition", "none");//1730192763:311589947
 //        argb.add("service", "create", "--constraint", "node.role==worker", "--name", serviceName, "-t", "-d", "-u", "0:0", "--replicas", "1", "--restart-condition", "none");
         /*
         docker service create --mount type=volume,volume-opt=o=addr=HAM-ITS0867,volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work,volume-opt=type=nfs,source=work,target=/work --replicas 1 --name testnfs alpine /bin/sh -c "ls -al /work/workspace"
@@ -159,7 +158,11 @@ public class DockerSwarmClient {
          * --replicas 1 --name testnfs alpine /bin/sh -c "ls -al /work/workspace"
          */
         // TODO: fix hard coded nfs mount
-        argb.add("--mount", "type=volume,volume-opt=o=addr=" + getJenkinsHostName() + ",volume-opt=device=:/Users/emueller/jenkins-local-nfs/workspace,volume-opt=type=nfs,source=workspace,target=/Users/emueller/jenkins-local-nfs/workspace");
+
+        //--mount 'type=volume,src=test,volume-driver=local,dst=/data/,volume-nocopy=true,volume-opt=type=nfs,volume-opt=device=:/nfs/test,volume-opt=o=addr=nfs.my.corporate.network' --name test --entrypoint=ls volume:defined-with-copy /data/
+//,volume-nocopy=true
+        argb.add("--mount", "type=volume,src=jenkins_home,volume-driver=local,dst=/var/jenkins_home/,volume-opt=type=nfs,volume-opt=device=:/Users/emueller/jenkins-local-nfs,\"volume-opt=o=addr=" + getJenkinsHostName()+".coremedia.com,rw\"");
+//        argb.add("--mount", "type=bind,source=/usr/bin/docker,target=/usr/bin/docker");
 //        argb.add("--mount", "type=bind,source=/usr/bin/docker,target=/usr/bin/docker");
         //argb.add("--mount", "type=volume,volume-opt=o=addr=" + getJenkinsHostName() + ",volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work/workspace/test@tmp,volume-opt=type=nfs,source=test@tmp,target=/Users/emueller/git-repositories/docker-workflow-plugin/work/workspace/test@tmp");
         for (Map.Entry<String, String> volume : volumes.entrySet()) {
@@ -167,16 +170,20 @@ public class DockerSwarmClient {
             // TODO: mount rw,z - as in DockerClient?
             argb.add("--mount", "target=" + volume.getValue());
         }
-//        argb.add("--mount", "target=/var/run/docker.sock");
-//        argb.add("--mount", "target=/usr/local/bin/docker");
+        argb.add("--mount", "type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock");
+        argb.add("--mount", "type=bind,src=/usr/bin/docker,dst=/usr/bin/docker");
+        argb.add("--mount", "type=bind,src=/usr/lib64/libltdl.so.7,dst=/usr/lib/libltdl.so.7");
+//        argb.add("--mount", "target=/var/jenkins_home/workspace/dockertest@tmp");
+//        argb.add("--mount", "target=/var/jenkins_home/workspace/dockertest");
 //        argb.add("--group", "root");
 //        argb.add("--mount", "target=/etc/passwd,readonly");
 //        argb.add("--mount", "target=/etc/group,readonly");
 
 // TODO: re-add
         for (String containerId : volumesFromContainers) {
-            argb.add("--volumes-from", containerId);
+//            argb.add("--volumes-from", containerId);
         }
+//        argb.add("--mount", "/var/jenkins_home:/var/jenkins_home");
         for (Map.Entry<String, String> variable : containerEnv.entrySet()) {
             argb.add("-e");
             argb.addMasked(variable.getKey() + "=" + variable.getValue());
