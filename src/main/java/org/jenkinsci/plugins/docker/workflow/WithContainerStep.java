@@ -271,7 +271,7 @@ public class WithContainerStep extends AbstractStepImpl {
                     } catch (InterruptedException x) {
                         throw new IOException(x);
                     }
-                    List<String> prefix = new ArrayList<>(Arrays.asList(executable, "-H", DockerSwarmClient.getDockerSwarmHostUri(containerRecord), "exec"));
+                    List<String> prefix = new ArrayList<>(Arrays.asList(executable, "-H", DockerSwarmClient.computeDockerSwarmHostUri(containerRecord), "exec"));
                     List<Boolean> masksPrefixList = new ArrayList<>(Arrays.asList(false, false));
                     if (ws != null) {
                         FilePath cwd = starter.pwd();
@@ -353,7 +353,7 @@ public class WithContainerStep extends AbstractStepImpl {
                 public void kill(Map<String, String> modelEnvVars) throws IOException, InterruptedException {
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
                     String executable = getExecutable();
-                    if (getInner().launch().cmds(executable, " -H ", DockerSwarmClient.getDockerSwarmHostUri(containerRecord), "exec", containerRecord.getContainerId(), "ps", "-A", "-o", "pid,command", "e").stdout(baos).quiet(true).start().joinWithTimeout(DockerSwarmClient.CLIENT_TIMEOUT, TimeUnit.SECONDS, listener) != 0) {
+                    if (getInner().launch().cmds(executable, " -H ", DockerSwarmClient.computeDockerSwarmHostUri(containerRecord), "exec", containerRecord.getContainerId(), "ps", "-A", "-o", "pid,command", "e").stdout(baos).quiet(true).start().joinWithTimeout(DockerSwarmClient.CLIENT_TIMEOUT, TimeUnit.SECONDS, listener) != 0) {
                         throw new IOException("failed to run ps");
                     }
                     List<String> pids = new ArrayList<String>();

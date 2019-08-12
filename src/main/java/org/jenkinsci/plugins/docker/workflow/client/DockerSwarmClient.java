@@ -129,7 +129,7 @@ public class DockerSwarmClient {
     }
 
     private static String generateServiceName(String workdir) throws UnknownHostException {
-        return getJenkinsHostName() + "-" + getLastPart(workdir, "/") + "-" + getRandomString();
+        return getJenkinsHostName() + "-" + getLastPart(workdir, "/").replaceAll("@", "-") + "-" + getRandomString();
     }
 
     private static String getLastPart(String text, String separator) {
@@ -158,7 +158,7 @@ public class DockerSwarmClient {
         ArgumentListBuilder argb = new ArgumentListBuilder();
 
         argb.add("-H", getDockerSwarmHostUri());
-        argb.add("service", "create", "--constraint", "node.role==worker", "--name", serviceName, "-t", "-d", "-u", getUserId() +":" + getDockerGroupId(), "--replicas", "1", "--restart-condition", "none");
+        argb.add("service", "create", "--reserve-memory", "200Mb", "--reserve-cpu", "7", "--constraint", "node.role==worker", "--name", serviceName, "-t", "-d", "-u", getUserId() +":" + getDockerGroupId(), "--replicas", "1", "--restart-condition", "none");
 //        argb.add("service", "create", "--constraint", "node.role==worker", "--name", serviceName, "-t", "-d", "-u", "0:0", "--replicas", "1", "--restart-condition", "none");
         /*
         docker service create --mount type=volume,volume-opt=o=addr=HAM-ITS0970,volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work,volume-opt=type=nfs,source=work,target=/work --replicas 1 --name testnfs alpine /bin/sh -c "ls -al /work/workspace"
@@ -229,17 +229,17 @@ public class DockerSwarmClient {
         }
     }
 
-    public static String getDockerSwarmHostUri(ContainerRecord containerRecord) {
+    public static String computeDockerSwarmHostUri(ContainerRecord containerRecord) {
         return "tcp://" + containerRecord.getHost() + ":2376";
     }
 
-    private static String getDockerSwarmHostUri(String host) {
+    private static String computeDockerSwarmHostUri(String host) {
         return "tcp://" + host + ":2376";
     }
 
     public List<String> listProcess(@Nonnull EnvVars launchEnv, @Nonnull ContainerRecord containerRecord) throws IOException, InterruptedException {
         String containerId = containerRecord.getContainerId();
-        LaunchResult result = launch(launchEnv, false, "-H", getDockerSwarmHostUri(containerRecord), "top", containerId, "-eo", "pid,comm");
+        LaunchResult result = launch(launchEnv, false, "-H", computeDockerSwarmHostUri(containerRecord), "top", containerId, "-eo", "pid,comm");
         if (result.getStatus() != 0) {
             throw new IOException(String.format("Failed to run top '%s'. Error: %s", containerId, result.getErr()));
         }
@@ -332,11 +332,42 @@ public class DockerSwarmClient {
 
     private String getNodeId(@Nonnull EnvVars launchEnv, @Nonnull String taskId) throws IOException, InterruptedException {
         //NODE_ID=$(docker inspect --format '{{ .NodeID }}' $TASK_ID)
-        LaunchResult result = launch(launchEnv, false, "-H", getDockerSwarmHostUri(), "inspect", "--format", "{{ .NodeID }}", taskId);
-        if (result.getStatus() == 0) {
-            return result.getOut();
+
+        int retryCount = 0;
+        int maxRetries = 10;
+
+        while (retryCount <= maxRetries) {
+            LaunchResult result = launch(launchEnv, false, "-H", getDockerSwarmHostUri(), "inspect", "--format", "{{ .NodeID }},{{ .Status.State }},{{ .Status.Message }},{{ .Status.Err }}", taskId);
+            if (result.getStatus() == 0) {
+                List<String> results = Arrays.asList(result.getOut().split(","));
+                String nodeId = results.get(0);
+                String state = results.get(1);
+                String msg = results.get(2);
+                String err = results.size() > 3 ? results.get(3) : "";
+
+                if (!"pending".equals(state)) {
+                    if (isNullOrEmpty(nodeId)) {
+                        throw new RuntimeException("Could not start task " + taskId + ": " + err + ": " + msg);
+                    }
+                    if (!isNullOrEmpty(err)) {
+                        throw new RuntimeException("Could not start task " + taskId + ": " + err + ": " + msg);
+                    }
+                    return nodeId;
+                }
+
+                Thread.sleep(2000L);
+                retryCount++;
+            } else {
+                throw new IOException("Cannot retrieve NodeID from 'docker inspect' for task " + taskId);
+            }
+
         }
-        throw new IOException("Cannot retrieve task id from 'docker inspect' for task " + taskId);
+
+        throw new IOException("Cannot retrieve NodeID from 'docker inspect' for task " + taskId);
+    }
+
+    private boolean isNullOrEmpty(String s) {
+        return s == null || s.isEmpty();
     }
 
     private String getContainerId(@Nonnull EnvVars launchEnv, @Nonnull String taskId) throws IOException, InterruptedException {
@@ -350,7 +381,7 @@ public class DockerSwarmClient {
 
     private String getContainerName(@Nonnull EnvVars launchEnv, @Nonnull String host, @Nonnull String containerId) throws IOException, InterruptedException {
         //docker -H tcp://m12n-ci-01-swarm-node-01.coremedia.vm:2376 ps --filter 'id=42e3f7123f2b' --format {{.Names}}
-        LaunchResult result = launch(launchEnv, false, "-H", getDockerSwarmHostUri(host), "ps", "--filter", "id=" + containerId, "--format", "{{.Names}}");
+        LaunchResult result = launch(launchEnv, false, "-H", computeDockerSwarmHostUri(host), "ps", "--filter", "id=" + containerId, "--format", "{{.Names}}");
         if (result.getStatus() == 0) {
             return result.getOut();
         }
