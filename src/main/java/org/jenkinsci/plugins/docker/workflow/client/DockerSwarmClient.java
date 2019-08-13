@@ -191,6 +191,7 @@ public class DockerSwarmClient {
         argb.add("--mount", "type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock");
         argb.add("--mount", "type=bind,src=/usr/bin/docker,dst=/usr/bin/docker");
         argb.add("--mount", "type=bind,src=/usr/lib64/libltdl.so.7,dst=/usr/lib/libltdl.so.7");
+        argb.add("--mount", "type=bind,src=/gitcache,dst=/gitcache");
 //        argb.add("--mount", "target=/var/jenkins_home/workspace/dockertest@tmp");
 //        argb.add("--mount", "target=/var/jenkins_home/workspace/dockertest");
 //        argb.add("--group", "root");
