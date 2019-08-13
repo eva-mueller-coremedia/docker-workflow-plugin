@@ -44,7 +44,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.StringReader;
-import java.net.UnknownHostException;
 import java.nio.charset.Charset;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
@@ -56,7 +55,6 @@ import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.StringTokenizer;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -86,29 +84,17 @@ public class DockerSwarmClient {
     private final @CheckForNull
     String toolName;
 
-//    private String serviceName;
-//    private String taskId;
-//    private String containerId;
-
     public DockerSwarmClient(@Nonnull Launcher launcher, @CheckForNull Node node, @CheckForNull String toolName) {
         this.launcher = launcher;
         this.node = node;
         this.toolName = toolName;
     }
 
-    /**
-     * Get Jenkins host name
-     *
-     * @return E.g. master-ci or toko-ci-01
-     */
-    private static String getJenkinsHostName() throws UnknownHostException {
-        //InetAddress.getLocalHost().getCanonicalHostName().split("\\.")[0];
-//        return "HAM-ITS0970";
+    private static String getJenkinsHostName() {
         return System.getenv("JENKINS_HOST");
     }
 
     private static String getNfsShare() {
-//        return "/media/rre-nfs";
         return System.getenv("JENKINS_NFS_SHARE");
     }
 
@@ -124,12 +110,30 @@ public class DockerSwarmClient {
         return System.getenv("DOCKER_GROUP_ID");
     }
 
-    private static String getRandomString() {
-        return UUID.randomUUID().toString().substring(0, 8);
+    private static String getReserveMemory() {
+        String reserveMemory = System.getenv("DOCKER_SWARM_RESERVE_MEMORY");
+        return reserveMemory != null ? reserveMemory : "1000Mb";
     }
 
-    private static String generateServiceName(String workdir) throws UnknownHostException {
-        return getJenkinsHostName() + "-" + getLastPart(workdir, "/").replaceAll("@", "-") + "-" + getRandomString();
+    private static String getReserveCpu() {
+        String reserveCpu = System.getenv("DOCKER_SWARM_RESERVE_CPU");
+        return reserveCpu != null ? reserveCpu : "2";
+    }
+
+    private static String getLimitMemory() {
+        String limitMemory = System.getenv("DOCKER_SWARM_LIMIT_MEMORY");
+        return limitMemory != null ? limitMemory : "4000Mb";
+    }
+
+    private static String getLimitCpu() {
+        String limitCpu = System.getenv("DOCKER_SWARM_LIMIT_CPU");
+        return limitCpu != null ? limitCpu : "4";
+    }
+
+    private static String generateServiceName(@Nonnull EnvVars launchEnv) {
+        return launchEnv.get("JENKINS_HOST") + "_"
+            + launchEnv.get("JOB_NAME").replaceAll("/", "_") + "_"
+            + launchEnv.get("BUILD_NUMBER");
     }
 
     private static String getLastPart(String text, String separator) {
@@ -152,17 +156,19 @@ public class DockerSwarmClient {
      * @return The container ID.
      */
     public ServiceRecord run(@Nonnull EnvVars launchEnv, @Nonnull String image, @CheckForNull String args, @CheckForNull String workdir, @Nonnull Map<String, String> volumes, @Nonnull Collection<String> volumesFromContainers, @Nonnull EnvVars containerEnv, @Nonnull String user, @Nonnull String... command) throws IOException, InterruptedException {
-
-        String serviceName = generateServiceName(workdir);
+        String serviceName = generateServiceName(launchEnv);
 
         ArgumentListBuilder argb = new ArgumentListBuilder();
 
         argb.add("-H", getDockerSwarmHostUri());
-        argb.add("service", "create", "--reserve-memory", "200Mb", "--reserve-cpu", "7", "--constraint", "node.role==worker", "--name", serviceName, "-t", "-d", "-u", getUserId() +":" + getDockerGroupId(), "--replicas", "1", "--restart-condition", "none");
-//        argb.add("service", "create", "--constraint", "node.role==worker", "--name", serviceName, "-t", "-d", "-u", "0:0", "--replicas", "1", "--restart-condition", "none");
-        /*
-        docker service create --mount type=volume,volume-opt=o=addr=HAM-ITS0970,volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work,volume-opt=type=nfs,source=work,target=/work --replicas 1 --name testnfs alpine /bin/sh -c "ls -al /work/workspace"
-         */
+        argb.add("service", "create",
+            "--name", serviceName,
+            "--reserve-memory", getReserveMemory(), "--reserve-cpu", getReserveCpu(),
+            "--limit-memory", getLimitMemory(), "--limit-cpu", getLimitCpu(),
+            "--constraint", "node.role==worker",
+            "-u", getUserId() +":" + getDockerGroupId(),
+            "-t", "-d", "--replicas", "1", "--restart-condition", "none");
+
         if (args != null) {
             argb.addTokenized(args);
         }
@@ -170,39 +176,16 @@ public class DockerSwarmClient {
         if (workdir != null) {
             argb.add("-w", workdir);
         }
-        /**
-         * docker service create
-         * --mount type=volume,volume-opt=o=addr=HAM-ITS0970,volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work,volume-opt=type=nfs,source=work,target=/work
-         * --replicas 1 --name testnfs alpine /bin/sh -c "ls -al /work/workspace"
-         */
-        // TODO: fix hard coded nfs mount
 
-        //--mount 'type=volume,src=test,volume-driver=local,dst=/data/,volume-nocopy=true,volume-opt=type=nfs,volume-opt=device=:/nfs/test,volume-opt=o=addr=nfs.my.corporate.network' --name test --entrypoint=ls volume:defined-with-copy /data/
-//,volume-nocopy=true
         argb.add("--mount", "type=volume,src=jenkins_home_" + getJenkinsHostName()+ ",volume-driver=local,dst=/var/jenkins_home_" + getJenkinsHostName() + ",volume-opt=type=nfs,volume-opt=device=:" + getNfsShare() + ",\"volume-opt=o=addr=" + getJenkinsHostName()+".coremedia.com,rw\"");
-//        argb.add("--mount", "type=bind,source=/usr/bin/docker,target=/usr/bin/docker");
-//        argb.add("--mount", "type=bind,source=/usr/bin/docker,target=/usr/bin/docker");
-        //argb.add("--mount", "type=volume,volume-opt=o=addr=" + getJenkinsHostName() + ",volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work/workspace/test@tmp,volume-opt=type=nfs,source=test@tmp,target=/Users/emueller/git-repositories/docker-workflow-plugin/work/workspace/test@tmp");
         for (Map.Entry<String, String> volume : volumes.entrySet()) {
-//            argb.add("--mount", "type=volume,volume-opt=o=addr=" + getJenkinsHostName() + ",volume-opt=device=:/Users/emueller/git-repositories/docker-workflow-plugin/work,volume-opt=type=nfs,source=" + volume.getValue() + ",target=" + volume.getValue());
-            // TODO: mount rw,z - as in DockerClient?
             argb.add("--mount", "target=" + volume.getValue());
         }
         argb.add("--mount", "type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock");
         argb.add("--mount", "type=bind,src=/usr/bin/docker,dst=/usr/bin/docker");
         argb.add("--mount", "type=bind,src=/usr/lib64/libltdl.so.7,dst=/usr/lib/libltdl.so.7");
         argb.add("--mount", "type=bind,src=/gitcache,dst=/gitcache");
-//        argb.add("--mount", "target=/var/jenkins_home/workspace/dockertest@tmp");
-//        argb.add("--mount", "target=/var/jenkins_home/workspace/dockertest");
-//        argb.add("--group", "root");
-//        argb.add("--mount", "target=/etc/passwd,readonly");
-//        argb.add("--mount", "target=/etc/group,readonly");
 
-// TODO: re-add
-        for (String containerId : volumesFromContainers) {
-//            argb.add("--volumes-from", containerId);
-        }
-//        argb.add("--mount", "/var/jenkins_home:/var/jenkins_home");
         for (Map.Entry<String, String> variable : containerEnv.entrySet()) {
             argb.add("-e");
             argb.addMasked(variable.getKey() + "=" + variable.getValue());
