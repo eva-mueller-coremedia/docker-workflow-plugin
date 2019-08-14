@@ -204,7 +204,7 @@ public class DockerSwarmClient {
                 ContainerRecord containerRecord = getContainerRecord(launchEnv, serviceName, containerId, containerName, host);
                 ServiceRecord serviceRecord = new ServiceRecord(serviceName, taskId, containerRecord);
                 return serviceRecord;
-            } catch (IOException | InterruptedException e) {
+            } catch (Exception e) {
                 rm(launchEnv, serviceName);
                 throw e;
             }
