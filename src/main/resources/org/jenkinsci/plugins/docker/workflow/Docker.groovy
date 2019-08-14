@@ -130,10 +130,13 @@ class Docker implements Serializable {
         }
 
         public Container run(String args = '', String command = "") {
+            throw new UnsupportedOperationException("docker run is not supported")
+/*
             docker.node {
                 def container = docker.script.sh(script: "docker run -d${args != '' ? ' ' + args : ''} ${id}${command != '' ? ' ' + command : ''}", returnStdout: true).trim()
                 new Container(docker, container)
             }
+*/
         }
 
         public <V> V withRun(String args = '', String command = "", Closure<V> body) {
