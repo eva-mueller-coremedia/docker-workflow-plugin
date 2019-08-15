@@ -108,6 +108,8 @@ public class FromFingerprintStep extends AbstractStepImpl {
 
         @Override
         protected Void run() throws Exception {
+            DockerSwarmClient client = new DockerSwarmClient(launcher, node, step.toolName);
+
             FilePath dockerfilePath = workspace.child(step.dockerfile);
             Dockerfile dockerfile = new Dockerfile(dockerfilePath);
             Map<String, String> buildArgs = DockerUtils.parseBuildArgs(dockerfile, step.commandLine);
@@ -120,12 +122,11 @@ public class FromFingerprintStep extends AbstractStepImpl {
                 // Fortunately, Docker uses the same EnvVar syntax as Jenkins :)
                 fromImage = Util.replaceMacro(fromImage, buildArgs);
             }
-            DockerSwarmClient client = new DockerSwarmClient(launcher, node, step.toolName);
-            String descendantImageId = client.inspectRequiredField(env, step.image, FIELD_ID);
+            String descendantImageId = client.inspectRequiredFieldLocal(env, step.image, FIELD_ID);
             if (fromImage.equals("scratch")) { // we just made a base image
                 DockerFingerprints.addFromFacet(null, descendantImageId, run);
             } else {
-                DockerFingerprints.addFromFacet(client.inspectRequiredField(env, fromImage, FIELD_ID), descendantImageId, run);
+                DockerFingerprints.addFromFacet(client.inspectRequiredFieldLocal(env, fromImage, FIELD_ID), descendantImageId, run);
                 ImageAction.add(fromImage, run);
             }
             return null;

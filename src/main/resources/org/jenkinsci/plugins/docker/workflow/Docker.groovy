@@ -89,6 +89,7 @@ class Docker implements Serializable {
         private final Docker docker;
         public final String id;
         private ImageNameTokens parsedId;
+        private String dockerSwarmRegistry;
 
         private Image(Docker docker, String id) {
             this.docker = docker
@@ -97,6 +98,9 @@ class Docker implements Serializable {
         }
 
         private String toQualifiedImageName(String imageName) {
+            if (dockerSwarmRegistry) {
+                return "${dockerSwarmRegistry}/${imageName}"
+            }
             return new org.jenkinsci.plugins.docker.commons.credentials.DockerRegistryEndpoint(docker.script.env.DOCKER_REGISTRY_URL, null).imageName(imageName)
         }
 
@@ -106,7 +110,12 @@ class Docker implements Serializable {
 
         public <V> V inside(String args = '', Closure<V> body) {
             docker.node {
-                def toRun = imageName()
+                if (docker.script.sh(script: "docker pull ${imageName()}", returnStatus: true) != 0) {
+                    // obviously the image has been built locally, so we need to push it and use its qualified name
+                    docker.script.sh(script: "docker tag ${imageName()} \${DOCKER_SWARM_REGISTRY}/${imageName()} && docker push \${DOCKER_SWARM_REGISTRY}/${imageName()}")
+                    dockerSwarmRegistry = docker.script.env.DOCKER_SWARM_REGISTRY
+                }
+                /*def toRun = imageName()
                 if (toRun != id && docker.script.sh(script: "docker inspect -f . ${id}", returnStatus: true) == 0) {
                     // Can run it without registry prefix, because it was locally built.
                     toRun = id
@@ -116,8 +125,8 @@ class Docker implements Serializable {
                         // withDockerContainer requires the image to be available locally, since its start phase is not a durable task.
                         pull()
                     }
-                }
-                docker.script.withDockerContainer(image: toRun, args: args, toolName: docker.script.env.DOCKER_TOOL_NAME) {
+                }*/
+                docker.script.withDockerContainer(image: imageName(), args: args, toolName: docker.script.env.DOCKER_TOOL_NAME) {
                     body()
                 }
             }

@@ -56,6 +56,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.StringTokenizer;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -297,6 +298,15 @@ public class DockerSwarmClient {
     }
 
     public @CheckForNull
+    String inspectLocal(@Nonnull EnvVars launchEnv, @Nonnull String objectId, @Nonnull String fieldPath) throws IOException, InterruptedException {
+        LaunchResult result = launch(launchEnv, false, "inspect", "-f", String.format("{{%s}}", fieldPath), objectId);
+        if (result.getStatus() == 0) {
+            return result.getOut();
+        }
+        throw new IOException("Cannot retrieve " + fieldPath + " from 'docker inspect " + objectId + "'");
+    }
+
+    public @CheckForNull
     String inspectService(@Nonnull EnvVars launchEnv, @Nonnull String objectId, @Nonnull String fieldPath) throws IOException, InterruptedException {
         LaunchResult result = launch(launchEnv, false, "-H", getDockerSwarmHostUri(), "service", "inspect", "-f", String.format("{{%s}}", fieldPath), objectId);
         if (result.getStatus() == 0) {
@@ -314,14 +324,17 @@ public class DockerSwarmClient {
         throw new IOException("Cannot retrieve task id from 'docker service ps' for service " + service + "'");
     }
 
-    private String getNodeId(@Nonnull EnvVars launchEnv, @Nonnull String taskId) throws IOException, InterruptedException {
+    private String getNodeId(@Nonnull EnvVars launchEnv, @Nonnull String taskId) {
         //NODE_ID=$(docker inspect --format '{{ .NodeID }}' $TASK_ID)
 
-        int retryCount = 0;
-        int maxRetries = 10;
+        return retry(() -> {
+            LaunchResult result;
+            try {
+                result = launch(launchEnv, false, "-H", getDockerSwarmHostUri(), "inspect", "--format", "{{ .NodeID }},{{ .Status.State }},{{ .Status.Message }},{{ .Status.Err }}", taskId);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
 
-        while (retryCount <= maxRetries) {
-            LaunchResult result = launch(launchEnv, false, "-H", getDockerSwarmHostUri(), "inspect", "--format", "{{ .NodeID }},{{ .Status.State }},{{ .Status.Message }},{{ .Status.Err }}", taskId);
             if (result.getStatus() == 0) {
                 List<String> results = Arrays.asList(result.getOut().split(","));
                 String nodeId = results.get(0);
@@ -338,29 +351,33 @@ public class DockerSwarmClient {
                     }
                     return nodeId;
                 }
-
-                Thread.sleep(2000L);
-                retryCount++;
-            } else {
-                throw new IOException("Cannot retrieve NodeID from 'docker inspect' for task " + taskId);
             }
-
-        }
-
-        throw new IOException("Cannot retrieve NodeID from 'docker inspect' for task " + taskId);
+            throw new RuntimeException("Cannot retrieve NodeID from 'docker inspect' for task " + taskId);
+        });
     }
 
     private boolean isNullOrEmpty(String s) {
         return s == null || s.isEmpty();
     }
 
-    private String getContainerId(@Nonnull EnvVars launchEnv, @Nonnull String taskId) throws IOException, InterruptedException {
+    private String getContainerId(@Nonnull EnvVars launchEnv, @Nonnull String taskId) {
         //CONTAINER_ID=$(docker inspect --format '{{ .Status.ContainerStatus.ContainerID }}' $TASK_ID)
-        LaunchResult result = launch(launchEnv, false, "-H", getDockerSwarmHostUri(), "inspect", "--format", "{{.Status.ContainerStatus.ContainerID}}", taskId);
-        if (result.getStatus() == 0) {
-            return result.getOut();
-        }
-        throw new IOException("Cannot retrieve container id from 'docker inspect' for task " + taskId);
+        return retry(() -> {
+            LaunchResult result;
+            try {
+                result = launch(launchEnv, false, "-H", getDockerSwarmHostUri(), "inspect", "--format", "{{.Status.ContainerStatus.ContainerID}}", taskId);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+            if (result.getStatus() == 0) {
+                String out = result.getOut();
+                if (isNullOrEmpty(out)) {
+                    throw new RuntimeException("Empty containerId for task " + taskId);
+                }
+                return out;
+            }
+            throw new RuntimeException("Cannot retrieve container id from 'docker inspect' for task " + taskId);
+        });
     }
 
     private String getContainerName(@Nonnull EnvVars launchEnv, @Nonnull String host, @Nonnull String containerId) throws IOException, InterruptedException {
@@ -396,6 +413,16 @@ public class DockerSwarmClient {
     String inspectRequiredField(@Nonnull EnvVars launchEnv, @Nonnull String objectId,
                                 @Nonnull String fieldPath) throws IOException, InterruptedException {
         final String fieldValue = inspect(launchEnv, objectId, fieldPath);
+        if (fieldValue == null) {
+            throw new IOException("Cannot retrieve " + fieldPath + " from 'docker inspect " + objectId + "'");
+        }
+        return fieldValue;
+    }
+
+    public @Nonnull
+    String inspectRequiredFieldLocal(@Nonnull EnvVars launchEnv, @Nonnull String objectId,
+                                     @Nonnull String fieldPath) throws IOException, InterruptedException {
+        final String fieldValue = inspectLocal(launchEnv, objectId, fieldPath);
         if (fieldValue == null) {
             throw new IOException("Cannot retrieve " + fieldPath + " from 'docker inspect " + objectId + "'");
         }
@@ -552,5 +579,28 @@ public class DockerSwarmClient {
             return Collections.emptyList();
         }
         return Arrays.asList(volumes.split("\\n"));
+    }
+
+    private static <T> T retry(Supplier<T> supplier) {
+        int retryCount = 0;
+        int maxRetries = 10;
+        long delay = 2000L;
+        Exception lastException = null;
+
+        while (retryCount < maxRetries) {
+            try {
+                return supplier.get();
+            } catch (Exception e) {
+                lastException = e;
+                retryCount++;
+                try {
+                    Thread.sleep(delay);
+                } catch (InterruptedException ignore) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
+
+        throw new RuntimeException("Still failing after 10 retries", lastException);
     }
 }
