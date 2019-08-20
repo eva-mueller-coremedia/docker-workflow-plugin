@@ -92,7 +92,11 @@ public class DockerSwarmClient {
     }
 
     private static String getJenkinsHostName() {
-        return System.getenv("JENKINS_HOST");
+        return getEnvironmentFqdn().split("\\.")[0];
+    }
+
+    private static String getEnvironmentFqdn() {
+        return System.getenv("ENVIRONMENT_FQDN");
     }
 
     private static String getNfsShare() {
@@ -132,7 +136,7 @@ public class DockerSwarmClient {
     }
 
     private static String generateServiceName(@Nonnull EnvVars launchEnv) {
-        return launchEnv.get("JENKINS_HOST") + "_"
+        return getJenkinsHostName() + "_"
             + launchEnv.get("JOB_NAME").replaceAll("/", "_") + "_"
             + launchEnv.get("BUILD_NUMBER");
     }
@@ -167,7 +171,7 @@ public class DockerSwarmClient {
             "--reserve-memory", getReserveMemory(), "--reserve-cpu", getReserveCpu(),
             "--limit-memory", getLimitMemory(), "--limit-cpu", getLimitCpu(),
             "--constraint", "node.role==worker",
-            "-u", getUserId() +":" + getDockerGroupId(),
+            "-u", getUserId() + ":" + getDockerGroupId(),
             "-t", "-d", "--replicas", "1", "--restart-condition", "none");
 
         if (args != null) {
@@ -178,7 +182,7 @@ public class DockerSwarmClient {
             argb.add("-w", workdir);
         }
 
-        argb.add("--mount", "type=volume,src=jenkins_home_" + getJenkinsHostName()+ ",volume-driver=local,dst=/var/jenkins_home_" + getJenkinsHostName() + ",volume-opt=type=nfs,volume-opt=device=:" + getNfsShare() + ",\"volume-opt=o=addr=" + getJenkinsHostName()+".coremedia.com,rw\"");
+        argb.add("--mount", "type=volume,src=jenkins_home_" + getJenkinsHostName() + ",volume-driver=local,dst=/var/jenkins_home_" + getJenkinsHostName() + ",volume-opt=type=nfs,volume-opt=device=:" + getNfsShare() + ",\"volume-opt=o=addr=" + getEnvironmentFqdn() + ",rw\"");
         for (Map.Entry<String, String> volume : volumes.entrySet()) {
             argb.add("--mount", "target=" + volume.getValue());
         }
